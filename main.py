@@ -76,20 +76,32 @@ def print_logs(logs, error=False):
 
 def check_service_status(args: Args) -> Union[Literal["online"], Literal["stopped"], None]:
     try:
-        # Check if service is running using pm2 jlist
-        result = subprocess.run(['pm2', 'jlist', '-s'],
-                                capture_output=True, text=True, shell=True)
-        
-        if result.stdout != '[]' and result.stdout:
-            servers_running = json.loads(result.stdout)
-            for server in servers_running:
-                if server['name'] == args.service_name:
-                    return server['pm2_env']['status']
+        def check_service():
+            # Check if service is running using pm2 jlist
+            result = subprocess.run(['pm2', 'jlist', '-s'],
+                                    capture_output=True, text=True, shell=True)
+            
+            if result.stdout != '[]' and result.stdout:
+                servers_running = json.loads(result.stdout)
+                for server in servers_running:
+                    if server['name'] == args.service_name:
+                        return server['pm2_env']['status']
+            return 'offline'
+        current_status = check_service()
+        if current_status != 'offline': return current_status
         else:
-            result = subprocess.run(['pm2', 'start', os.path.join(args.config_file_path), '--only', args.service_name],
-                                capture_output=True, text=True, shell=True)
+            # result = subprocess.run(['pm2', 'start', os.path.join(args.config_file_path), '--only', args.service_name],
+            #                     capture_output=True, text=True, shell=True, encoding='utf-8')
+            cmd = f"pm2 start \"{args.config_file_path}\" --only \"{args.service_name}\""
+            # result = subprocess.run(cmd, check=True, capture_output=True, text=True, shell=True, encoding='utf-8')
+            result = subprocess.run(cmd, capture_output=True, shell=True, check=True, text=True, encoding='utf-8')
+            
+            current_status = check_service()
+            if current_status != 'offline': return 'starting'
+            else: return 'stopped-error'
             print('result.stdout: ', result.stdout)
-            return 'starting'
+            print('run: ', ['pm2', 'start', os.path.join(args.config_file_path), '--only', args.service_name])
+            print('cmd: ', cmd)
         return None
     except Exception as err:
         exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -181,6 +193,23 @@ def check_and_run(args: Args):
             print_logs(f"Service {args.service_name} has been started and notification sent.")
         except subprocess.CalledProcessError as e:
             print_logs(f"Error starting service: {str(e)}")
+    elif run == "stopped-error":
+        print_logs(f"Service {args.service_name} is not running and the attempt to start failed...")
+        try:
+            # Get logs after restart
+            logs = get_pm2_logs(args.service_name)
+            # Create logs file attachment
+            log_file = f"./logs/pm2_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+
+            with open(log_file, 'w') as f:
+                f.write(logs)
+
+            # Send email notification
+            send_email(log_file, f"Service {args.service_name} is not running and the attempt to start failed", f"Service {args.service_name} is not running and the attempt to start failed. Logs are attached.")
+
+            print_logs(f"Service {args.service_name} has been started and notification sent.")
+        except subprocess.CalledProcessError as e:
+            print_logs(f"Error starting service: {str(e)}")
     else:
         print_logs(f"Service {args.service_name} is running.")
 
@@ -253,6 +282,7 @@ def build_and_update(service_name: str, package_manager: str, cwd: str = None):
 
 try:
     jsonArg = json.loads(sys.argv[1].replace("'", '"'))
+    # jsonArg = json.loads("{'function': 'check_service_status', 'config_file_path': 'C:/Users/vitor.vasconcelos/code/integratis-2/pm2.config.js', 'service_name': 'integratis-dev'}".replace("'", '"'))
     jsonArg = Args(
         function=jsonArg['function'] if 'function' in jsonArg.keys() else '',
         check_service_status=jsonArg['check_service_status'] if 'check_service_status' in jsonArg.keys() else '',
@@ -292,4 +322,5 @@ if __name__ == "__main__":
 
 # py main.py "{'function': 'check_service_status', 'service_name': 'integratis-dev'}"
 # py main.py "{'function': 'update_build', 'service_name': 'integratis-dev', 'package_manager': 'yarn', 'cwd': 'C:\\Users\\vitor.vasconcelos\\code\\integratis-2'}"
-# "C:\server-handler\main.py" "{'function': 'check_service_status', 'config_file_path': 'C:\integratis-2\pm2.config.js', 'service_name': 'integratis-prod'}"
+# "C:\server-handler\main.py" "{'function': 'check_service_status', 'config_file_path': 'C:/integratis-2/pm2.config.js', 'service_name': 'integratis-prod'}"
+# "C:\Users\vitor.vasconcelos\code\server-handler\main.py" "{'function': 'check_service_status', 'config_file_path': 'C:/Users/vitor.vasconcelos/code/integratis-2/pm2.config.js', 'service_name': 'integratis-dev'}"
